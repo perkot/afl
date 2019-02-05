@@ -1,0 +1,253 @@
+---
+title: "Change in average AFL game scores from 1897 to 2018"
+author: "perkot"
+date: "07 December 2018"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## The Data
+
+AFLTables.com provides historic data on every VFL/AFL game ever played, all the way back to the leagues inception in 1897. 
+
+The web-link can be found here: <https://afltables.com/afl/stats/biglists/bg3.txt>.
+
+In this rpub, I will visualise change in average match-day scores from 1897 to the present. The approach herein will hopefuly encourage further analyses 
+
+First, lets load-in our dependencies :
+
+```{r Load dependencies, results='hide', message=FALSE, warning=FALSE}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(anytime)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(reshape)
+library(data.table)
+library(knitr)
+library(kableExtra)
+```
+
+Read URL to R, specifying columns and delimiters
+
+```{r load data, results='hide', message=FALSE, warning=FALSE}
+#read in URL
+url <- 'https://afltables.com/afl/stats/biglists/bg3.txt'
+
+#specify columns
+AllAFLData <- read_table(url, col_names = c("ID", "Date", "Round", "HomeTeam",  
+                                            "HomeScore", "AwayTeam", "AwayScore", 
+                                            "Venue"), 
+                         col_types = NULL, skip = 2)
+
+#Convert to dataframe 
+AllAFLData <- data.frame(as.list(AllAFLData))
+AllAFLData <- data.frame(AllAFLData, stringsAsFactors = FALSE) 
+```
+
+We should now have a dataframe with 8 variables, and 15,407 rows
+
+```{r print table preview, echo=FALSE}
+#kable formats tables much more nicely 
+kable(head(AllAFLData))%>% #head limits to just top rows
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive", font_size = 8))
+```
+
+## Cleaning and Feature Extraction 
+
+Change variable types
+
+```{r change variable types}
+#Change variable types
+AllAFLData$HomeScore <- as.character(AllAFLData$HomeScore)
+AllAFLData$HomeTeam <- as.character(AllAFLData$HomeTeam)
+AllAFLData$AwayTeam <- as.character(AllAFLData$AwayTeam)
+AllAFLData$Date <- as.character(AllAFLData$Date)
+```
+
+Extract out 'Year' from our date column
+
+```{r additional date columns }
+#Duplicate date column, and separate date into day, month and year columns
+AllAFLData$Date2 = AllAFLData$Date
+
+AllAFLData <- separate(AllAFLData, Date2, 
+                       into = c("Day", "Month", "Year"), 
+                       sep = "[-]")
+
+AllAFLData$Day <- as.numeric(as.character(AllAFLData$Day))
+AllAFLData$Year <- as.numeric(as.character(AllAFLData$Year))
+```
+
+Separate 'score' column(s) into goals, behinds and total
+
+```{r additional score columns }
+#Separate score column into goals, behinds, and total 
+AllAFLData <- separate(AllAFLData, HomeScore, 
+                                   into = c("HomeGoals", "HomeBehinds", 
+                                            "HomeTotal"), 
+                                   sep = "[.]")
+
+AllAFLData <- separate(AllAFLData, AwayScore, 
+                                   into = c("AwayGoals", "AwayBehinds", 
+                                            "AwayTotal"), 
+                                   sep = "[.]")
+```
+
+Change score variables from character to numeric
+
+```{r change variable type }
+#check all variable types 
+sapply(AllAFLData, class)
+
+#change newly created numeric columns to numeric 
+cols.num <- c("HomeGoals","HomeBehinds", "HomeTotal", 
+              "AwayGoals", "AwayBehinds", "AwayTotal")
+AllAFLData[cols.num] <- sapply(AllAFLData[cols.num],as.numeric)
+
+#confirm change
+sapply(AllAFLData, class)
+```
+
+Aggregate teams who have merged
+
+```{r merge teams}
+#change names and merge teams 
+AllAFLData[AllAFLData=="South Melbourne"] <- "South Melb/Syd"
+AllAFLData[AllAFLData=="Sydney"] <- "South Melb/Syd"
+AllAFLData[AllAFLData=="Fitzroy"] <- "Fitzroy/Brisbane"
+AllAFLData[AllAFLData=="Brisbane Bears"] <- "Fitzroy/Brisbane"
+AllAFLData[AllAFLData=="Brisbane Lions"] <- "Fitzroy/Brisbane"
+AllAFLData[AllAFLData=="Kangaroos"] <- "North Melbourne"
+AllAFLData[AllAFLData=="Footscray"] <- "Western Bulldogs"
+AllAFLData[AllAFLData=="Western Bulldog"] <- "Western Bulldogs"
+AllAFLData[AllAFLData=="GW Sydney"] <- "GWS"
+```
+
+Finally, create an 'era' variable which breaks down games by the decade they occurred in. We will use this variable as a slicer for the visualisation 
+
+```{r create an era variable}
+
+AllAFLData$Era <- ifelse(AllAFLData$Year>=1897 & AllAFLData$Year<=1899,"1890s",
+                  ifelse(AllAFLData$Year>=1900 & AllAFLData$Year<=1909,"1900s",
+                  ifelse(AllAFLData$Year>=1910 & AllAFLData$Year<=1919,"1910s",  
+                  ifelse(AllAFLData$Year>=1920 & AllAFLData$Year<=1929,"1920s",
+                  ifelse(AllAFLData$Year>=1930 & AllAFLData$Year<=1939,"1930s", 
+                  ifelse(AllAFLData$Year>=1940 & AllAFLData$Year<=1949,"1940s",
+                  ifelse(AllAFLData$Year>=1950 & AllAFLData$Year<=1959,"1950s",
+                  ifelse(AllAFLData$Year>=1960 & AllAFLData$Year<=1969,"1960s",
+                  ifelse(AllAFLData$Year>=1970 & AllAFLData$Year<=1979,"1970s",
+                  ifelse(AllAFLData$Year>=1980 & AllAFLData$Year<=1989,"1980s",
+                  ifelse(AllAFLData$Year>=1990 & AllAFLData$Year<=1999,"1990s",
+                  ifelse(AllAFLData$Year>=2000 & AllAFLData$Year<=2009,"2000s",
+                  ifelse(AllAFLData$Year>=2010 & AllAFLData$Year<=2019,"2010s", 0)))))))))))))
+```
+
+## Aggregation
+
+Let's begin building a table summarising the total number of games and total score of each team, per decade
+
+```{r total games and total score per decade}
+#Total score per team, per decade for home games
+EraScore <- AllAFLData %>%
+  gather(HomeAway, Team, HomeTeam) %>% 
+  group_by(Era, Team) %>%
+  summarise(HomeTotal = sum(HomeTotal))
+
+#Total score per team, per decade for away games
+EraScore <- AllAFLData %>%
+  gather(HomeAway, Team, AwayTeam) %>% 
+  group_by(Era, Team) %>%
+  summarise(AwayTotal = sum(AwayTotal)) %>%
+  left_join(EraScore, 
+            by = c("Team" = "Team", 
+                   "Era" = "Era")) 
+
+#Total number of home & away games per team 
+EraScore <- AllAFLData %>%
+  gather(HomeAway, Team, HomeTeam, AwayTeam) %>% 
+  group_by(Era, Team) %>%
+  summarise(GamesHome = sum(HomeAway == "HomeTeam"),
+            GamesAway = sum(HomeAway == "AwayTeam")) %>% 
+  left_join(EraScore, 
+            by = c("Team" = "Team", 
+                   "Era" = "Era")) 
+```
+
+Combine home and away scores and games to get absolute totals. Determine the average score per team, per game, per decade
+
+```{r total games and average score columns}
+#Total games per team, per decade
+EraScore$TotalGames <- (EraScore$GamesHome + 
+                          EraScore$GamesAway)
+#Total score per team, per decade
+EraScore$TotalScore <- (EraScore$HomeTotal + 
+                          EraScore$AwayTotal)
+#Average score per team, per decade
+EraScore$AverageScore <- (EraScore$TotalScore / 
+                            EraScore$TotalGames)
+#round to 2 decimal places
+EraScore[,'AverageScore']=round(EraScore[,'AverageScore'],2)
+
+#Re-order variables
+EraScore <- EraScore[,c(1,2,3,4,7,5,6,8,9)]
+```
+
+View our newly developed table 
+
+```{r new table, echo=FALSE}
+kable(head(EraScore)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive", font_size = 8))
+```
+
+## Visualising the data
+
+Create a minimalistic theme for our animated plot
+
+```{r create a minimalistic theme for bar plots}
+#minimalistic theme for visualisation 
+PlotlyTheme <-
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(color='light grey'),
+    plot.title = element_text(size=8, hjust=0.5),
+    axis.title.x = element_blank(),
+    axis.text = element_text(size=6),
+    axis.text.x = element_text(angle = 45, hjust = 1, colour="#606060"),
+    axis.text.y = element_text(hjust = 1, colour="#606060"),
+    axis.title = element_text(size=8),
+    axis.line.x = element_line(color="black", size = 0.5),
+    axis.line.y = element_line(color="black", size = 0.5),
+    legend.key = element_rect(fill = "white") +
+      scale_y_continuous(label = comma)
+  )
+```
+
+Visualise the average score per match, per team, across each decade 
+
+```{r create winning plot, warning=FALSE}
+#animated plot, summarising every teams average score per decade
+animatedscore <- EraScore %>% 
+  ggplot(aes(x = Team, y = AverageScore)) + 
+  geom_point(aes(frame = Era), colour="#3599B8") + 
+  stat_summary(aes(y = AverageScore, group = 1, frame = Era), 
+               fun.y=mean, colour="#3599B8", geom = "line", group = 1) +
+  labs(title = "Average score per game, per decade for all AFL teams", 
+       y = "Average score") +
+  PlotlyTheme
+```
+
+This interactive visualisation clearly shows that with each passing decade up until the 1980s, incremental increases in average score per team, per game can be observed. Scoring has increased nearly three-fold since the 1890s. From 1990 to the present, there has been a slight downward trend in overall scoring. This is probably attributable to more sophisticated defensive tactics as the game has matured into a professional competition. 
+
+```{r plot, echo=FALSE}
+ggplotly(animatedscore)
+```
